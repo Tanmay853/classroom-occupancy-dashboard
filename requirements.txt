@@ -2,3 +2,4 @@ streamlit>=1.27
 pandas>=1.5
 plotly>=5.18
 supabase>=2.3
+cv2
