@@ -9,7 +9,7 @@ import os
 REFRESH_SEC = 10
 LAYOUT_IMAGE = "lc001_borders.png"
 
-ZONE_CAPACITY = [20, 20, 25, 25, 15, 15]
+ZONE_CAPACITY = [20, 20, 40, 40, 20, 20]
 OVERLOAD_THRESHOLD = 80  # %
 
 # ================= SUPABASE (ENV ONLY) =================
@@ -143,27 +143,27 @@ def zone_color(p):
     else:
         return (0, 0, 255)
 
-# Adjust these coordinates to your layout
-zones_px = [
-    (30, 30, 200, 200),
-    (220, 30, 400, 200),
-    (420, 30, 580, 200),
-    (30, 220, 200, 580),
-    (220, 220, 400, 580),
-    (420, 220, 580, 580),
-]
+# # Adjust these coordinates to your layout
+# zones_px = [
+#     (30, 30, 200, 200),
+#     (220, 30, 400, 200),
+#     (420, 30, 580, 200),
+#     (30, 220, 200, 580),
+#     (220, 220, 400, 580),
+#     (420, 220, 580, 580),
+# ]
 
-for i, (x1, y1, x2, y2) in enumerate(zones_px):
-    cv2.rectangle(img, (x1, y1), (x2, y2), zone_color(zone_util[i]), 3)
-    cv2.putText(
-        img,
-        f"Z{i+1}: {latest[f'zone{i+1}']}",
-        (x1 + 10, y1 + 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        2
-    )
+# for i, (x1, y1, x2, y2) in enumerate(zones_px):
+#     cv2.rectangle(img, (x1, y1), (x2, y2), zone_color(zone_util[i]), 3)
+#     cv2.putText(
+#         img,
+#         f"Z{i+1}: {latest[f'zone{i+1}']}",
+#         (x1 + 10, y1 + 30),
+#         cv2.FONT_HERSHEY_SIMPLEX,
+#         0.6,
+#         (255, 255, 255),
+#         2
+#     )
 
 st.image(img, channels="BGR")
 
