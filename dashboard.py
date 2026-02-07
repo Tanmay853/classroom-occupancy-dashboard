@@ -76,13 +76,10 @@ df_room = df_room.sort_values("created_at", ascending=False)
 
 # ================= EMPTY WINDOW GUARD =================
 if df_room.empty:
-    st.info(
-        "No data in selected time range. Showing latest available data instead."
-    )
+    st.info("No data in selected time range. Showing latest available data instead.")
     df_room = df[df["room"] == selected_room].sort_values(
         "created_at", ascending=False
     )
-
 
 latest = df_room.iloc[0]
 previous = df_room.iloc[1] if len(df_room) > 1 else latest
@@ -109,62 +106,59 @@ avg_util = sum(
 ) / 6
 c3.metric("📊 Avg Utilization", f"{avg_util:.1f}%")
 
-# ================= UTILIZATION & ALERTS =================
+# ================= UTILIZATION + ALERTS =================
 st.subheader("⚠️ Zone Utilization & Alerts")
 
-zone_util = []
-for i in range(6):
-    util = (latest[f"zone{i+1}"] / ZONE_CAPACITY[i]) * 100
-    zone_util.append(util)
+zone_names = [f"Zone {i+1}" for i in range(6)]
+zone_occupied = [latest[f"zone{i+1}"] for i in range(6)]
+zone_capacity = ZONE_CAPACITY
+
+zone_util = [
+    (zone_occupied[i] / zone_capacity[i]) * 100
+    if zone_capacity[i] > 0 else 0
+    for i in range(6)
+]
+
+zone_labels = [
+    f"{zone_occupied[i]} / {zone_capacity[i]}"
+    for i in range(6)
+]
+
+for i, util in enumerate(zone_util):
     if util > OVERLOAD_THRESHOLD:
         st.error(f"⚠️ Zone {i+1} overloaded ({util:.1f}%)")
 
-# ================= UTILIZATION BAR =================
+# ================= UTILIZATION BAR (ENHANCED) =================
 fig_bar = px.bar(
-    x=[f"Zone {i+1}" for i in range(6)],
+    x=zone_names,
     y=zone_util,
+    text=zone_labels,
     labels={"x": "Zone", "y": "Utilization (%)"},
-    title="Zone Utilization (%)",
+    title="Zone Utilization (%) with Occupied / Capacity",
     range_y=[0, 100]
 )
+
+fig_bar.update_traces(
+    textposition="outside",
+    hovertemplate=(
+        "Zone: %{x}<br>"
+        "Utilization: %{y:.1f}%<br>"
+        "Occupied / Capacity: %{text}<extra></extra>"
+    )
+)
+
+fig_bar.update_layout(
+    uniformtext_minsize=10,
+    uniformtext_mode="hide"
+)
+
 st.plotly_chart(fig_bar, use_container_width=True)
 
-# ================= FLOOR PLAN (HEAT VIEW) =================
-st.subheader("🗺️ Floor Plan (Heat View)")
+# ================= FLOOR PLAN =================
+st.subheader("🗺️ Floor Plan View")
 
 img = cv2.imread(LAYOUT_IMAGE)
 img = cv2.resize(img, (600, 600))
-
-def zone_color(p):
-    if p < 50:
-        return (0, 255, 0)
-    elif p < 80:
-        return (0, 255, 255)
-    else:
-        return (0, 0, 255)
-
-# # Adjust these coordinates to your layout
-# zones_px = [
-#     (30, 30, 200, 200),
-#     (220, 30, 400, 200),
-#     (420, 30, 580, 200),
-#     (30, 220, 200, 580),
-#     (220, 220, 400, 580),
-#     (420, 220, 580, 580),
-# ]
-
-# for i, (x1, y1, x2, y2) in enumerate(zones_px):
-#     cv2.rectangle(img, (x1, y1), (x2, y2), zone_color(zone_util[i]), 3)
-#     cv2.putText(
-#         img,
-#         f"Z{i+1}: {latest[f'zone{i+1}']}",
-#         (x1 + 10, y1 + 30),
-#         cv2.FONT_HERSHEY_SIMPLEX,
-#         0.6,
-#         (255, 255, 255),
-#         2
-#     )
-
 st.image(img, channels="BGR")
 
 # ================= TIME SERIES =================
