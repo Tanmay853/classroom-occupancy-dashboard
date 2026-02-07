@@ -9,15 +9,15 @@ import os
 REFRESH_SEC = 10
 LAYOUT_IMAGE = "lc001_borders.png"
 
-ZONE_CAPACITY = [20, 20, 25, 25, 15, 15]   # per-zone capacity
+ZONE_CAPACITY = [20, 20, 25, 25, 15, 15]
 OVERLOAD_THRESHOLD = 80  # %
 
-# ===== Supabase credentials (ENV ONLY) =====
+# ================= SUPABASE (ENV ONLY) =================
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Supabase credentials not set in environment variables.")
+    st.error("❌ Supabase credentials not set.")
     st.stop()
 
 # ================= SETUP =================
@@ -40,13 +40,15 @@ def load_data():
         .execute()
     )
     df = pd.DataFrame(res.data)
+    if df.empty:
+        return df
     df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
     return df
 
 df = load_data()
 
 if df.empty:
-    st.warning("No data available.")
+    st.warning("No data available in database.")
     st.stop()
 
 # ================= SIDEBAR =================
@@ -61,7 +63,6 @@ time_range = st.sidebar.selectbox(
 )
 
 df_room = df[df["room"] == selected_room].copy()
-
 now = pd.Timestamp.now(tz="UTC")
 
 if time_range == "Last 10 minutes":
@@ -73,12 +74,19 @@ else:
 
 df_room = df_room.sort_values("created_at", ascending=False)
 
+# ================= EMPTY WINDOW GUARD =================
+if df_room.empty:
+    st.warning(
+        f"No data available for **{selected_room}** in the selected time range."
+    )
+    st.stop()
+
 latest = df_room.iloc[0]
 previous = df_room.iloc[1] if len(df_room) > 1 else latest
 
 # ================= HEADER =================
 st.title("📊 Classroom Occupancy Dashboard")
-st.caption(f"Room: **{selected_room}** | Last update: {latest['created_at']}")
+st.caption(f"Room: **{selected_room}** | Updated: {latest['created_at']}")
 
 # ================= METRICS =================
 c1, c2, c3 = st.columns(3)
@@ -93,7 +101,7 @@ active_zones = sum(latest[f"zone{i+1}"] > 0 for i in range(6))
 c2.metric("📍 Active Zones", active_zones)
 
 avg_util = sum(
-    latest[f"zone{i+1}"] / ZONE_CAPACITY[i] * 100
+    (latest[f"zone{i+1}"] / ZONE_CAPACITY[i]) * 100
     for i in range(6)
 ) / 6
 c3.metric("📊 Avg Utilization", f"{avg_util:.1f}%")
@@ -102,16 +110,11 @@ c3.metric("📊 Avg Utilization", f"{avg_util:.1f}%")
 st.subheader("⚠️ Zone Utilization & Alerts")
 
 zone_util = []
-alerts = []
-
 for i in range(6):
     util = (latest[f"zone{i+1}"] / ZONE_CAPACITY[i]) * 100
     zone_util.append(util)
     if util > OVERLOAD_THRESHOLD:
-        alerts.append(f"⚠️ Zone {i+1} overloaded ({util:.1f}%)")
-
-for alert in alerts:
-    st.error(alert)
+        st.error(f"⚠️ Zone {i+1} overloaded ({util:.1f}%)")
 
 # ================= UTILIZATION BAR =================
 fig_bar = px.bar(
@@ -123,7 +126,7 @@ fig_bar = px.bar(
 )
 st.plotly_chart(fig_bar, use_container_width=True)
 
-# ================= FLOOR PLAN (HEATMAP) =================
+# ================= FLOOR PLAN (HEAT VIEW) =================
 st.subheader("🗺️ Floor Plan (Heat View)")
 
 img = cv2.imread(LAYOUT_IMAGE)
@@ -131,13 +134,13 @@ img = cv2.resize(img, (600, 600))
 
 def zone_color(p):
     if p < 50:
-        return (0, 255, 0)     # green
+        return (0, 255, 0)
     elif p < 80:
-        return (0, 255, 255)   # yellow
+        return (0, 255, 255)
     else:
-        return (0, 0, 255)     # red
+        return (0, 0, 255)
 
-# Adjust these rectangles to your actual zones
+# Adjust these coordinates to your layout
 zones_px = [
     (30, 30, 200, 200),
     (220, 30, 400, 200),
@@ -179,5 +182,5 @@ with st.expander("ℹ️ How occupancy is computed"):
     - Homography projection to floor plan  
     - DBSCAN merging to avoid double counting  
     - Zone-wise counting  
-    - Cloud storage and visualization via Supabase  
+    - Supabase-backed cloud dashboard  
     """)
