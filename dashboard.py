@@ -76,10 +76,13 @@ df_room = df_room.sort_values("created_at", ascending=False)
 
 # ================= EMPTY WINDOW GUARD =================
 if df_room.empty:
-    st.warning(
-        f"No data available for **{selected_room}** in the selected time range."
+    st.info(
+        "No data in selected time range. Showing latest available data instead."
     )
-    st.stop()
+    df_room = df[df["room"] == selected_room].sort_values(
+        "created_at", ascending=False
+    )
+
 
 latest = df_room.iloc[0]
 previous = df_room.iloc[1] if len(df_room) > 1 else latest
