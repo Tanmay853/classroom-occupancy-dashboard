@@ -8,54 +8,70 @@ import math
 
 def calculate_pmv(temp, rh, met=1.1, clo=0.7, v=0.1):
     """
-    Simplified Fanger PMV calculation
-    temp: air temperature (°C)
-    rh: relative humidity (%)
+    Robust PMV calculation (safe for dashboards)
+    Returns None if inputs are invalid
     """
 
-    if temp is None or rh is None:
+    try:
+        # Guard against NaN / None / bad ranges
+        if temp is None or rh is None:
+            return None
+
+        if not (10 <= temp <= 40):
+            return None
+
+        if not (1 <= rh <= 100):
+            return None
+
+        # Constants
+        pa = rh * 10 * math.exp(16.6536 - 4030.183 / (temp + 235))
+        icl = 0.155 * clo
+        m = met * 58.15
+        w = 0
+        mw = m - w
+
+        fcl = 1 + 1.29 * icl if icl <= 0.078 else 1.05 + 0.645 * icl
+
+        hcf = 12.1 * math.sqrt(v)
+        taa = temp + 273.15
+        tra = taa
+
+        tcla = taa + (35.5 - temp) / (3.5 * icl + 0.1)
+
+        for _ in range(30):
+            hcn = 2.38 * abs(tcla - taa) ** 0.25
+            hc = max(hcf, hcn)
+
+            tcla_new = (
+                (mw
+                 + 3.96e-8 * fcl * (tra**4 - tcla**4)
+                 + fcl * hc * (taa - tcla))
+                / (3.5 * icl + fcl * hc)
+                + taa
+            )
+
+            if abs(tcla - tcla_new) < 0.01:
+                break
+
+            tcla = tcla_new
+
+        pmv = (
+            0.303 * math.exp(-0.036 * m) + 0.028
+        ) * (
+            mw
+            - 3.05 * (5.73 - 0.007 * mw - pa)
+            - 0.42 * (mw - 58.15)
+            - 1.7e-5 * m * (5867 - pa)
+            - 0.0014 * m * (34 - temp)
+            - 3.96e-8 * fcl * (tcla**4 - tra**4)
+            - fcl * hc * (tcla - taa)
+        )
+
+        return round(float(pmv), 2)
+
+    except Exception:
         return None
 
-    # Constants
-    pa = rh * 10 * math.exp(16.6536 - 4030.183 / (temp + 235))
-    icl = 0.155 * clo
-    m = met * 58.15
-    w = 0
-    mw = m - w
-
-    fcl = 1.05 + 0.1 * icl * 6.45 if icl > 0.078 else 1 + 1.29 * icl
-
-    hcf = 12.1 * math.sqrt(v)
-    taa = temp + 273
-    tra = taa
-
-    tcla = taa + (35.5 - temp) / (3.5 * icl + 0.1)
-
-    for _ in range(50):
-        hcn = 2.38 * abs(tcla - taa) ** 0.25
-        hc = max(hcf, hcn)
-        tcla_new = (
-            (mw + 3.96e-8 * fcl * (tra**4 - tcla**4) + fcl * hc * (taa - tcla))
-            / (3.5 * icl + fcl * hc)
-            + taa
-        )
-        if abs(tcla - tcla_new) < 0.01:
-            break
-        tcla = tcla_new
-
-    pmv = (
-        0.303 * math.exp(-0.036 * m) + 0.028
-    ) * (
-        mw
-        - 3.05 * (5.73 - 0.007 * mw - pa)
-        - 0.42 * (mw - 58.15)
-        - 1.7e-5 * m * (5867 - pa)
-        - 0.0014 * m * (34 - temp)
-        - 3.96e-8 * fcl * (tcla**4 - tra**4)
-        - fcl * hc * (tcla - taa)
-    )
-
-    return round(pmv, 2)
 
 
 # ================= CONFIG =================
@@ -175,10 +191,11 @@ latest_env_time = (
     env_df["env_time"].iloc[-1] if not env_df.empty else None
 )
 
-df_room["pmv"] = df_room.apply(
-    lambda r: calculate_pmv(r["temperature"], r["humidity"]),
-    axis=1
-)
+df_room["pmv"] = [
+    calculate_pmv(t, h)
+    for t, h in zip(df_room["temperature"], df_room["humidity"])
+]
+
 
 latest_pmv = df_room.iloc[0]["pmv"]
 
@@ -226,8 +243,9 @@ c5.metric(
 
 c6.metric(
     "🧍 PMV",
-    f"{latest_pmv}" if latest_pmv is not None else "—"
+    f"{latest_pmv:.2f}" if pd.notna(latest_pmv) else "—"
 )
+
 
 # ================= UTILIZATION =================
 st.subheader("⚠️ Zone Utilization & Alerts")
@@ -307,6 +325,7 @@ if pd.notna(latest_hum) and latest_hum > 70:
 
 st.subheader("🌡️ Thermal Comfort (PMV)")
 
+#==PMV analysis========================
 if latest_pmv is None:
     st.info("PMV unavailable (waiting for environment data)")
 elif latest_pmv < -0.5:
