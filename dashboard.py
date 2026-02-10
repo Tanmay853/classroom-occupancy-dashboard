@@ -103,12 +103,6 @@ def nearest_env_values(t):
 
 env_values = df_room["created_at"].apply(nearest_env_values)
 df_room[["temperature", "humidity"]] = env_values
-df_room["temperature"] = df_room["env_row"].apply(
-    lambda r: r["temperature"] if r is not None else None
-)
-df_room["humidity"] = df_room["env_row"].apply(
-    lambda r: r["humidity"] if r is not None else None
-)
 
 latest_temp = df_room.iloc[0]["temperature"]
 latest_hum = df_room.iloc[0]["humidity"]
