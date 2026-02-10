@@ -165,22 +165,25 @@ env_df = df.dropna(
     subset=["env_time", "temperature", "humidity"]
 ).sort_values("env_time")
 
-def nearest_env_values(t):
-    past = env_df[env_df["env_time"] <= t]
+MAX_ENV_DIFF = pd.Timedelta(minutes=3)  # must be ≥ env upload period
 
-    if past.empty:
+def nearest_env_values(t):
+    if env_df.empty:
         return pd.Series({"temperature": None, "humidity": None})
 
-    row = past.iloc[-1]
+    # Find closest env row (past OR future)
+    idx = (env_df["env_time"] - t).abs().idxmin()
+    row = env_df.loc[idx]
 
-    # Reject stale env data
-    if t - row["env_time"] > MAX_ENV_LAG:
+    # Reject if too far away
+    if abs(row["env_time"] - t) > MAX_ENV_DIFF:
         return pd.Series({"temperature": None, "humidity": None})
 
     return pd.Series({
         "temperature": row["temperature"],
         "humidity": row["humidity"]
     })
+
 
 env_values = df_room["created_at"].apply(nearest_env_values)
 df_room[["temperature", "humidity"]] = env_values
