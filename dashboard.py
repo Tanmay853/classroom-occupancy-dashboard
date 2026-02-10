@@ -90,11 +90,19 @@ previous = df_room.iloc[1] if len(df_room) > 1 else latest
 # ================= ENV SYNC =================
 env_df = df.dropna(subset=["env_time"]).sort_values("env_time")
 
-def nearest_env(t):
+def nearest_env_values(t):
     past = env_df[env_df["env_time"] <= t]
-    return past.iloc[-1] if not past.empty else None
+    if past.empty:
+        return pd.Series({"temperature": None, "humidity": None})
+    row = past.iloc[-1]
+    return pd.Series({
+        "temperature": row["temperature"],
+        "humidity": row["humidity"]
+    })
 
-df_room["env_row"] = df_room["created_at"].apply(nearest_env)
+
+env_values = df_room["created_at"].apply(nearest_env_values)
+df_room[["temperature", "humidity"]] = env_values
 df_room["temperature"] = df_room["env_row"].apply(
     lambda r: r["temperature"] if r is not None else None
 )
