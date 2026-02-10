@@ -4,6 +4,59 @@ import plotly.express as px
 from supabase import create_client
 import cv2
 import os
+import math
+
+def calculate_pmv(temp, rh, met=1.1, clo=0.7, v=0.1):
+    """
+    Simplified Fanger PMV calculation
+    temp: air temperature (°C)
+    rh: relative humidity (%)
+    """
+
+    if temp is None or rh is None:
+        return None
+
+    # Constants
+    pa = rh * 10 * math.exp(16.6536 - 4030.183 / (temp + 235))
+    icl = 0.155 * clo
+    m = met * 58.15
+    w = 0
+    mw = m - w
+
+    fcl = 1.05 + 0.1 * icl * 6.45 if icl > 0.078 else 1 + 1.29 * icl
+
+    hcf = 12.1 * math.sqrt(v)
+    taa = temp + 273
+    tra = taa
+
+    tcla = taa + (35.5 - temp) / (3.5 * icl + 0.1)
+
+    for _ in range(50):
+        hcn = 2.38 * abs(tcla - taa) ** 0.25
+        hc = max(hcf, hcn)
+        tcla_new = (
+            (mw + 3.96e-8 * fcl * (tra**4 - tcla**4) + fcl * hc * (taa - tcla))
+            / (3.5 * icl + fcl * hc)
+            + taa
+        )
+        if abs(tcla - tcla_new) < 0.01:
+            break
+        tcla = tcla_new
+
+    pmv = (
+        0.303 * math.exp(-0.036 * m) + 0.028
+    ) * (
+        mw
+        - 3.05 * (5.73 - 0.007 * mw - pa)
+        - 0.42 * (mw - 58.15)
+        - 1.7e-5 * m * (5867 - pa)
+        - 0.0014 * m * (34 - temp)
+        - 3.96e-8 * fcl * (tcla**4 - tra**4)
+        - fcl * hc * (tcla - taa)
+    )
+
+    return round(pmv, 2)
+
 
 # ================= CONFIG =================
 REFRESH_SEC = 10
@@ -122,6 +175,13 @@ latest_env_time = (
     env_df["env_time"].iloc[-1] if not env_df.empty else None
 )
 
+df_room["pmv"] = df_room.apply(
+    lambda r: calculate_pmv(r["temperature"], r["humidity"]),
+    axis=1
+)
+
+latest_pmv = df_room.iloc[0]["pmv"]
+
 
 # ================= HEADER =================
 st.title("📊 Classroom Occupancy Dashboard")
@@ -135,7 +195,7 @@ else:
     st.caption("🌡️ Environment data: unavailable")
 
 # ================= METRICS =================
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 c1.metric(
     "👥 Total Students",
@@ -162,6 +222,11 @@ c4.metric(
 c5.metric(
     "💧 Humidity (%)",
     f"{latest_hum:.1f}" if pd.notna(latest_hum) else "—"
+)
+
+c6.metric(
+    "🧍 PMV",
+    f"{latest_pmv}" if latest_pmv is not None else "—"
 )
 
 # ================= UTILIZATION =================
@@ -239,6 +304,19 @@ if pd.notna(latest_temp) and latest_temp > 28 and latest["total_count"] > 30:
 
 if pd.notna(latest_hum) and latest_hum > 70:
     st.warning("💧 High humidity — discomfort likely")
+
+st.subheader("🌡️ Thermal Comfort (PMV)")
+
+if latest_pmv is None:
+    st.info("PMV unavailable (waiting for environment data)")
+elif latest_pmv < -0.5:
+    st.warning("❄️ Slightly cold")
+elif -0.5 <= latest_pmv <= 0.5:
+    st.success("✅ Thermally comfortable")
+elif 0.5 < latest_pmv <= 1.0:
+    st.warning("🌤️ Slightly warm")
+else:
+    st.error("🔥 Too warm — discomfort likely")
 
 # ================= EXPLAINABILITY =================
 with st.expander("ℹ️ How this system works"):
