@@ -191,13 +191,24 @@ latest_env_time = (
     env_df["env_time"].iloc[-1] if not env_df.empty else None
 )
 
-df_room["pmv"] = [
+# ================= PMV COMPUTATION =================
+df_room["pmv"] = None
+
+valid_mask = (
+    df_room["temperature"].notna() &
+    df_room["humidity"].notna()
+)
+
+df_room.loc[valid_mask, "pmv"] = [
     calculate_pmv(t, h)
-    for t, h in zip(df_room["temperature"], df_room["humidity"])
+    for t, h in zip(
+        df_room.loc[valid_mask, "temperature"],
+        df_room.loc[valid_mask, "humidity"]
+    )
 ]
 
-
 latest_pmv = df_room.iloc[0]["pmv"]
+
 
 
 # ================= HEADER =================
