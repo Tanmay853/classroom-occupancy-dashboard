@@ -9,6 +9,8 @@ import os
 REFRESH_SEC = 10
 LAYOUT_IMAGE = "lc001_borders.png"
 
+MAX_ENV_LAG_MIN = 4   # minutes (safe > 2 min)
+
 ZONE_CAPACITY = [20, 20, 40, 40, 20, 20]
 OVERLOAD_THRESHOLD = 80  # %
 
@@ -87,29 +89,50 @@ if df_room.empty:
 latest = df_room.iloc[0]
 previous = df_room.iloc[1] if len(df_room) > 1 else latest
 
-# ================= ENV SYNC =================
-env_df = df.dropna(subset=["env_time"]).sort_values("env_time")
+# ================= ENV SYNC (WITH STALENESS GUARD) =================
+MAX_ENV_LAG = pd.Timedelta(minutes=MAX_ENV_LAG_MIN)
+
+env_df = df.dropna(
+    subset=["env_time", "temperature", "humidity"]
+).sort_values("env_time")
 
 def nearest_env_values(t):
     past = env_df[env_df["env_time"] <= t]
+
     if past.empty:
         return pd.Series({"temperature": None, "humidity": None})
+
     row = past.iloc[-1]
+
+    # Reject stale env data
+    if t - row["env_time"] > MAX_ENV_LAG:
+        return pd.Series({"temperature": None, "humidity": None})
+
     return pd.Series({
         "temperature": row["temperature"],
         "humidity": row["humidity"]
     })
-
 
 env_values = df_room["created_at"].apply(nearest_env_values)
 df_room[["temperature", "humidity"]] = env_values
 
 latest_temp = df_room.iloc[0]["temperature"]
 latest_hum = df_room.iloc[0]["humidity"]
+latest_env_time = (
+    env_df["env_time"].iloc[-1] if not env_df.empty else None
+)
+
 
 # ================= HEADER =================
 st.title("📊 Classroom Occupancy Dashboard")
 st.caption(f"Room: **{selected_room}** | Updated: {latest['created_at']}")
+
+# ================= ENV FRESHNESS =================
+if latest_env_time is not None:
+    env_age_sec = int((latest["created_at"] - latest_env_time).total_seconds())
+    st.caption(f"🌡️ Environment data age: **{env_age_sec} sec**")
+else:
+    st.caption("🌡️ Environment data: unavailable")
 
 # ================= METRICS =================
 c1, c2, c3, c4, c5 = st.columns(5)
