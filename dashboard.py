@@ -99,31 +99,97 @@ st.set_page_config(
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ================= DATA FETCH =================
+# ... (Imports and Calculate PMV function remain the same) ...
+
+# ================= DATA PROCESSING =================
 @st.cache_data(ttl=REFRESH_SEC)
-def load_data():
+def load_and_merge_data():
+    # 1. Fetch raw data (mix of occupancy and env rows)
     res = (
         supabase
         .table("occupancy")
         .select("*")
         .order("created_at", desc=True)
-        .limit(500)
+        .limit(1000) # Fetch enough history to find matches
         .execute()
     )
 
     df = pd.DataFrame(res.data)
     if df.empty:
-        return df
+        return pd.DataFrame()
 
+    # 2. Convert Time to UTC Datetime
     df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
-    df["env_time"] = pd.to_datetime(df.get("env_time"), utc=True, errors="coerce")
+    
+    # 3. Split the data into two streams
+    # Stream A: Occupancy Data (Rows with valid total_count)
+    occ_df = df.dropna(subset=["total_count"]).copy()
+    occ_df = occ_df.sort_values("created_at") # merge_asof requires sorting
+    
+    # Stream B: Environment Data (Rows with valid temperature)
+    # We select only the columns we need to merge in
+    env_df = df.dropna(subset=["temperature", "humidity"])[
+        ["created_at", "temperature", "humidity"]
+    ].copy()
+    env_df = env_df.sort_values("created_at")
 
-    return df
+    if occ_df.empty:
+        return df # Return raw if no occupancy
+        
+    if env_df.empty:
+        # If no env data exists yet, fill with None so app doesn't crash
+        occ_df["temperature"] = None
+        occ_df["humidity"] = None
+        occ_df["pmv"] = None
+        return occ_df.sort_values("created_at", ascending=False)
 
-df = load_data()
+    # 4. PERFORM THE MERGE (The Magic Step)
+    # direction='nearest': looks for closest match in past or future
+    # tolerance: 1 minute (pd.Timedelta)
+    merged_df = pd.merge_asof(
+        occ_df, 
+        env_df, 
+        on="created_at", 
+        direction="nearest", 
+        tolerance=pd.Timedelta("60s"), 
+        suffixes=("", "_env") # Handles conflict if any
+    )
 
-if df.empty:
-    st.warning("No data available in database.")
+    # 5. Calculate PMV on the aligned data
+    # Now every row in merged_df has occupancy AND nearest temp (if found)
+    merged_df["pmv"] = [
+        calculate_pmv(t, h) 
+        for t, h in zip(merged_df["temperature"], merged_df["humidity"])
+    ]
+
+    # Return sorted by newest first for the dashboard
+    return merged_df.sort_values("created_at", ascending=False)
+
+# ================= APP EXECUTION =================
+df_room = load_and_merge_data()
+
+if df_room.empty:
+    st.warning("No data available.")
+    st.stop()
+
+# Filter by Room (after merge)
+df_room = df_room[df_room["room"] == selected_room]
+
+# Extract Latest Valid Data
+if not df_room.empty:
+    latest = df_room.iloc[0]
+    
+    # Check if we actually found a temperature match
+    if pd.isna(latest["temperature"]):
+        st.warning(f"⚠️ Occupancy data updated, but no Environment data found within 1 minute of {latest['created_at'].strftime('%H:%M:%S')}")
+        latest_temp = None
+        latest_hum = None
+        latest_pmv = None
+    else:
+        latest_temp = latest["temperature"]
+        latest_hum = latest["humidity"]
+        latest_pmv = latest["pmv"]
+else:
     st.stop()
 
 # ================= SIDEBAR =================
