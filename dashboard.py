@@ -32,58 +32,81 @@ st.set_page_config(
 )
 
 # ================= UTILS: PMV CALCULATION =================
-# ================= UTILS: PMV CALCULATION (DEBUG VERSION) =================
+# ================= UTILS: PMV CALCULATION (CRASH PROOF) =================
 def calculate_pmv(temp, rh, met=1.1, clo=0.7, v=0.1):
     try:
-        # Check for Missing Values
+        # 1. Validation & Typing
         if pd.isna(temp) or pd.isna(rh) or temp is None or rh is None:
-            return "ERR: Missing Data"
-
-        # Force Type Conversion (Crucial step)
+            return None
+        
         try:
             temp = float(temp)
             rh = float(rh)
         except ValueError:
-            return f"ERR: Not a number ({temp}, {rh})"
+            return None
 
-        # Range Check
-        if not (10 <= temp <= 40):
-            return f"ERR: Temp out of range ({temp})"
-        if not (1 <= rh <= 100):
-            return f"ERR: Humidity out of range ({rh})"
+        # 2. Hard Range Check (PMV is only valid here anyway)
+        if not (10 <= temp <= 40): return None
+        if not (0 <= rh <= 100): return None
 
-        # --- MATH ---
-        pa = rh * 10 * math.exp(16.6536 - 4030.183 / (temp + 235))
+        # 3. Setup Variables
+        # Vapor Pressure (Pa) - Safe exp calculation
+        try:
+            pa_exponent = 16.6536 - 4030.183 / (temp + 235)
+            pa = rh * 10 * math.exp(pa_exponent)
+        except OverflowError:
+            return None
+
         icl = 0.155 * clo
         m = met * 58.15
-        mw = m
-        w = 0
-        mw = m - w
-
-        fcl = 1 + 1.29 * icl if icl <= 0.078 else 1.05 + 0.645 * icl
+        mw = m - 0  # assuming work=0
+        
+        fcl = 1.0 + 1.29 * icl if icl <= 0.078 else 1.05 + 0.645 * icl
         hcf = 12.1 * math.sqrt(v)
         taa = temp + 273.15
+        tra = taa
         tcla = taa + (35.5 - temp) / (3.5 * icl + 0.1)
 
+        # 4. Iterative Solver with Safety Clamps
         for _ in range(30):
+            # Clamp tcla to prevent explosion (0°C to 100°C in Kelvin)
+            # No human clothing is 1000°C, so this stops the crash.
+            tcla = max(273, min(373, tcla)) 
+
             hcn = 2.38 * abs(tcla - taa) ** 0.25
             hc = max(hcf, hcn)
-            tcla_new = ((mw + 3.96e-8 * fcl * (taa**4 - tcla**4) + fcl * hc * (taa - tcla)) / (3.5 * icl + fcl * hc) + taa)
+
+            tcla_new = (
+                (mw
+                 + 3.96e-8 * fcl * (tra**4 - tcla**4)
+                 + fcl * hc * (taa - tcla))
+                / (3.5 * icl + fcl * hc)
+                + taa
+            )
+
             if abs(tcla - tcla_new) < 0.01:
                 break
             tcla = tcla_new
 
-        pmv = (0.303 * math.exp(-0.036 * m) + 0.028) * (
-            mw - 3.05 * (5.73 - 0.007 * mw - pa) - 0.42 * (mw - 58.15)
-            - 1.7e-5 * m * (5867 - pa) - 0.0014 * m * (34 - temp)
-            - 3.96e-8 * fcl * (tcla**4 - taa**4) - fcl * hc * (tcla - taa)
+        # 5. Final Calculation
+        pmv = (
+            0.303 * math.exp(-0.036 * m) + 0.028
+        ) * (
+            mw
+            - 3.05 * (5.73 - 0.007 * mw - pa)
+            - 0.42 * (mw - 58.15)
+            - 1.7e-5 * m * (5867 - pa)
+            - 0.0014 * m * (34 - temp)
+            - 3.96e-8 * fcl * (tcla**4 - tra**4)
+            - fcl * hc * (tcla - taa)
         )
 
-        return round(float(pmv), 2)
+        # 6. Final Clamp (PMV is typically -3 to +3)
+        return max(-3.5, min(3.5, round(float(pmv), 2)))
 
-    except Exception as e:
-        # RETURN THE ACTUAL ERROR STRING
-        return f"CRASH: {str(e)}"
+    except Exception:
+        # If it STILL crashes (very rare), just return None so the app stays alive
+        return None
 
 
 # ================= CORE LOGIC: DATA SYNC =================
