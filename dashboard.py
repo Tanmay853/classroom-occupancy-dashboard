@@ -95,48 +95,51 @@ def load_and_merge_data():
     df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
     
     # 3. Split Streams
-    # Stream A: Occupancy (has total_count)
-    occ_df = df.dropna(subset=["total_count"]).copy()
+    
+    # Stream A: Occupancy
+    # FIX: Select ONLY relevant columns to avoid collision with env columns later
+    occ_cols = ["id", "room", "created_at", "total_count", "zone1", "zone2", "zone3", "zone4", "zone5", "zone6"]
+    # Filter to keep only existing columns (safeguard)
+    occ_cols = [c for c in occ_cols if c in df.columns]
+    
+    occ_df = df.dropna(subset=["total_count"])[occ_cols].copy()
     occ_df = occ_df.sort_values("created_at")
     
     # Stream B: Environment (has temperature)
-    # We select minimal columns to avoid merge conflicts
     env_df = df.dropna(subset=["temperature", "humidity"])[
         ["created_at", "temperature", "humidity"]
     ].copy()
     env_df = env_df.sort_values("created_at")
 
-    # 4. Handle Edge Cases (Missing Data Streams)
+    # 4. Handle Edge Cases
     if occ_df.empty:
-        return pd.DataFrame() # No occupancy data to display
+        return pd.DataFrame() 
         
     if env_df.empty:
-        # If sensors haven't uploaded yet, return occupancy with empty env cols
+        # If sensors haven't uploaded yet, fill with NaN
         occ_df["temperature"] = np.nan
         occ_df["humidity"] = np.nan
         occ_df["pmv"] = None
         return occ_df.sort_values("created_at", ascending=False)
 
     # 5. SYNC: Merge As-Of
-    # Matches each Occupancy row with the *nearest* Environment row 
-    # within the MERGE_TOLERANCE_SEC window.
+    # Now occ_df does NOT have 'temperature', so the merge will simply add it.
     merged_df = pd.merge_asof(
         occ_df, 
         env_df, 
         on="created_at", 
         direction="nearest", 
-        tolerance=pd.Timedelta(seconds=MERGE_TOLERANCE_SEC),
-        suffixes=("", "_env")
+        tolerance=pd.Timedelta(seconds=MERGE_TOLERANCE_SEC)
     )
 
-    # 6. Calculate PMV on synchronized rows
+    # 6. Calculate PMV
     merged_df["pmv"] = [
         calculate_pmv(t, h) 
         for t, h in zip(merged_df["temperature"], merged_df["humidity"])
     ]
 
     return merged_df.sort_values("created_at", ascending=False)
-
+    
 # ================= APP EXECUTION =================
 
 # 1. Load Data
