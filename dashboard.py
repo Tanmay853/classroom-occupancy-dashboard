@@ -33,40 +33,70 @@ st.set_page_config(
 
 # ================= UTILS: PMV CALCULATION =================
 def calculate_pmv(temp, rh, met=1.1, clo=0.7, v=0.1):
-    """
-    Robust PMV calculation. Returns None if inputs are invalid/missing.
-    """
     try:
+        # --- ROBUST TYPE CONVERSION ---
+        # Force inputs to be standard Python floats.
+        # This fixes issues with Strings ("30.5") or Decimals (from database)
         if temp is None or rh is None or pd.isna(temp) or pd.isna(rh):
             return None
+            
+        temp = float(temp)
+        rh = float(rh)
+        # -----------------------------
+
         if not (10 <= temp <= 40) or not (1 <= rh <= 100):
             return None
 
-        # PMV Physics Constants
+        # Constants
         pa = rh * 10 * math.exp(16.6536 - 4030.183 / (temp + 235))
         icl = 0.155 * clo
         m = met * 58.15
-        mw = m  # assuming w=0
+        mw = m
+        w = 0
+        mw = m - w
+
         fcl = 1 + 1.29 * icl if icl <= 0.078 else 1.05 + 0.645 * icl
+
         hcf = 12.1 * math.sqrt(v)
         taa = temp + 273.15
+        tra = taa
+
         tcla = taa + (35.5 - temp) / (3.5 * icl + 0.1)
 
         for _ in range(30):
             hcn = 2.38 * abs(tcla - taa) ** 0.25
             hc = max(hcf, hcn)
-            tcla_new = ((mw + 3.96e-8 * fcl * (taa**4 - tcla**4) + fcl * hc * (taa - tcla)) / (3.5 * icl + fcl * hc) + taa)
+
+            tcla_new = (
+                (mw
+                 + 3.96e-8 * fcl * (tra**4 - tcla**4)
+                 + fcl * hc * (taa - tcla))
+                / (3.5 * icl + fcl * hc)
+                + taa
+            )
+
             if abs(tcla - tcla_new) < 0.01:
                 break
+
             tcla = tcla_new
 
-        pmv = (0.303 * math.exp(-0.036 * m) + 0.028) * (
-            mw - 3.05 * (5.73 - 0.007 * mw - pa) - 0.42 * (mw - 58.15)
-            - 1.7e-5 * m * (5867 - pa) - 0.0014 * m * (34 - temp)
-            - 3.96e-8 * fcl * (tcla**4 - taa**4) - fcl * hc * (tcla - taa)
+        pmv = (
+            0.303 * math.exp(-0.036 * m) + 0.028
+        ) * (
+            mw
+            - 3.05 * (5.73 - 0.007 * mw - pa)
+            - 0.42 * (mw - 58.15)
+            - 1.7e-5 * m * (5867 - pa)
+            - 0.0014 * m * (34 - temp)
+            - 3.96e-8 * fcl * (tcla**4 - tra**4)
+            - fcl * hc * (tcla - taa)
         )
+
         return round(float(pmv), 2)
-    except Exception:
+
+    except Exception as e:
+        # Optional: Print error to console to see what's wrong
+        # print(f"PMV Error: {e}") 
         return None
 
 # ================= CORE LOGIC: DATA SYNC =================
@@ -118,12 +148,18 @@ def load_and_merge_data():
     if df_occupancy.empty:
         return pd.DataFrame()
 
+    # --- ADD THIS BLOCK ---
+    # Force columns to numeric, turning errors (like strings) into NaN
+    df_occupancy["temperature"] = pd.to_numeric(df_occupancy["temperature"], errors='coerce')
+    df_occupancy["humidity"] = pd.to_numeric(df_occupancy["humidity"], errors='coerce')
+    # ----------------------
+
     # 6. Calculate PMV
     df_occupancy["pmv"] = [
         calculate_pmv(t, h) 
         for t, h in zip(df_occupancy["temperature"], df_occupancy["humidity"])
     ]
-
+    
     return df_occupancy.sort_values("created_at", ascending=False)
     
 # ================= APP EXECUTION =================
