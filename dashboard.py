@@ -72,7 +72,7 @@ def calculate_pmv(temp, rh, met=1.1, clo=0.7, v=0.1):
 # ================= CORE LOGIC: DATA SYNC =================
 @st.cache_data(ttl=REFRESH_SEC)
 def load_and_merge_data():
-    # 1. Fetch ALL data (occupancy and environment mixed)
+    # 1. Fetch ALL data
     res = (
         supabase
         .table("occupancy")
@@ -87,36 +87,36 @@ def load_and_merge_data():
     if df.empty:
         return pd.DataFrame(columns=["room", "created_at", "total_count", "temperature", "humidity"])
 
-    # 2. Convert to DateTime (UTC) & Sort
+    # 2. CLEANUP (Crucial Step)
+    # Convert time
     df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
-    df = df.sort_values("created_at") # Strict sorting is required for filling
-
-    # 3. The "Smart Fill" Strategy
-    # We group by room so we don't mix data from different rooms.
-    # ffill() propagates the last known temp forward.
-    # bfill() pulls the next known temp backward (handles if sensor uploads slightly after camera).
-    # limit=1 creates a safety buffer (won't fill data if the gap is too huge, row-wise)
     
-    # Note: For time-based safety, we calculate staleness later.
-    df["temperature"] = df.groupby("room")["temperature"].ffill().bfill()
-    df["humidity"] = df.groupby("room")["humidity"].ffill().bfill()
+    # Clean Room Names (Fixes "LC302" vs "LC302 " mismatch)
+    if "room" in df.columns:
+        df["room"] = df["room"].astype(str).str.strip()
+        
+        # If any rows have missing rooms (NaN/None), try to fill them from neighbors
+        # This fixes cases where the ESP32 might have failed to send the room name
+        df["room"] = df["room"].replace("None", np.nan).replace("nan", np.nan)
+        df["room"] = df["room"].ffill().bfill()
 
-    # 4. Filter: Keep only the rows that have Vision Data
-    # Now these rows have "inherited" the temperature data from their neighbors
+    # 3. Sort by Time (Required for filling)
+    df = df.sort_values("created_at")
+
+    # 4. SMART FILL
+    # We use both ffill (forward) and bfill (backward) to cover gaps
+    # regardless of which device uploaded first.
+    if "temperature" in df.columns:
+        df["temperature"] = df.groupby("room")["temperature"].ffill().bfill()
+        
+    if "humidity" in df.columns:
+        df["humidity"] = df.groupby("room")["humidity"].ffill().bfill()
+
+    # 5. Filter for Occupancy Rows
     df_occupancy = df[df["total_count"].notna()].copy()
 
     if df_occupancy.empty:
         return pd.DataFrame()
-
-    # 5. Safety Check: Remove data that is "stale"
-    # If the nearest temp reading was actually 3 hours ago, ffill would still bring it.
-    # We check the time difference to ensure accuracy.
-    
-    # We create a 'valid_env_time' column tracking when the temp was actually recorded
-    # (Complex logic simplified: If the filled temp is older than 5 mins, treat as None)
-    
-    # For now, we trust the ffill/bfill for the dashboard display. 
-    # If you see data, it's the nearest available.
 
     # 6. Calculate PMV
     df_occupancy["pmv"] = [
@@ -125,8 +125,7 @@ def load_and_merge_data():
     ]
 
     return df_occupancy.sort_values("created_at", ascending=False)
-
-
+    
 # ================= APP EXECUTION =================
 
 # 1. Load Data
@@ -182,6 +181,17 @@ latest_pmv = latest["pmv"]
 
 # ================= DASHBOARD LAYOUT =================
 st.title("📊 Classroom Occupancy Dashboard")
+
+# --- DEBUG SECTION (Remove after fixing) ---
+with st.expander("🕵️‍♂️ Debug Data View"):
+    st.write("Here are the latest 5 merged rows. Check if Temp/Hum are NaN.")
+    st.dataframe(df_room.head(5))
+    
+    st.write("Unique Rooms Found:", df_room["room"].unique())
+    
+    if pd.isna(latest_temp):
+        st.error(f"Latest Temp is NaN! The nearest valid temp data might be missing or in a different 'room' group.")
+# -------------------------------------------
 st.caption(f"Room: **{selected_room}** | Live Update: {latest['created_at'].strftime('%H:%M:%S UTC')}")
 
 # Check for Stale Sensor Data
